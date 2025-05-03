@@ -104,6 +104,7 @@ poetry.lock
 
 # Logs
 process_log.txt
+process_log.log
 
 # Custom
 *.bak 
