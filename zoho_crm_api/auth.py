@@ -55,19 +55,29 @@ def _refresh_access_token():
             log_action(f"Access token refreshed successfully. Valid until: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_token_data['expires_at']))}. API Domain: {_token_data['api_domain']}", logging.INFO)
             return _token_data["access_token"]
         else:
-            error_msg = f"Failed to refresh token. Response: {data}"
+            error_msg = f"Failed to refresh token. 'access_token' not in response. Response: {data}"
             log_action(error_msg, logging.ERROR)
             raise AuthError(error_msg)
 
     except requests.exceptions.RequestException as e:
-        error_details = f"Error during token refresh request: {str(e)}"
+        error_details = f"Network/Request Error during token refresh: {str(e)}"
+        if hasattr(e.response, 'status_code'):
+            error_details += f" | Status: {e.response.status_code}"
         if hasattr(e.response, 'text'):
-            error_details += f" | Response: {e.response.text}"
+            # Try to parse Zoho's error JSON if available
+            try:
+                zoho_error = e.response.json()
+                error_details += f" | Response Body: {zoho_error}"
+            except requests.exceptions.JSONDecodeError:
+                 error_details += f" | Response Body: {e.response.text}" # Log raw text if not JSON
         log_action(error_details, logging.ERROR)
-        raise AuthError(error_details)
-    except Exception as e: # Catch any other unexpected errors
-        log_action(f"Unexpected error during token refresh: {str(e)}", logging.ERROR)
-        raise AuthError(f"Unexpected error during token refresh: {str(e)}")
+        # Specific check for common OAuth errors
+        if hasattr(e.response, 'status_code') and e.response.status_code == 400:
+             raise AuthError(f"Invalid client configuration or refresh token: {error_details}")
+        raise AuthError(error_details) # General auth error for other request issues
+    except Exception as e: # Catch any other unexpected errors like JSON parsing errors if response was malformed but status 200
+        log_action(f"Unexpected error during token refresh processing: {str(e)}", logging.ERROR)
+        raise AuthError(f"Unexpected error processing token refresh: {str(e)}")
 
 
 def get_access_token():
@@ -77,11 +87,13 @@ def get_access_token():
     """
     current_time = time.time()
     if _token_data["access_token"] and _token_data["expires_at"] > current_time:
-        # Token exists and is valid
+        log_action("Using existing valid access token.", logging.DEBUG) # Uncommented DEBUG log
         return _token_data["access_token"]
     else:
-        # Token is missing or expired, refresh it
-        log_action("Access token missing or expired. Refreshing...", logging.INFO)
+        if not _token_data["access_token"]:
+            log_action("Access token is missing. Refreshing...", logging.INFO)
+        else:
+             log_action("Access token has expired. Refreshing...", logging.INFO)
         return _refresh_access_token()
 
 def get_api_domain():
